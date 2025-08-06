@@ -14,19 +14,23 @@ RabbitMQ message queue.
 
 ## Project Structure
 
-\`\`\`
+```
 lms-zabbix-sync/
-├── main.py # Main entry point
+├── main.py                  # Main entry point
+├── pyproject.toml           # Project metadata and dependencies
+├── uv.lock                  # Locked dependencies
+├── lms_zabbix_sync.log      # Application log file
 ├── src/
-│ ├── __init__.py # Package initialization
-│ ├── config.py # Configuration management
-│ ├── buffer.py # Device buffer for incomplete data
-│ ├── zabbix_client.py # Zabbix API client
-│ ├── message_processor.py # LMS message processing
-│ └── sync.py # Main sync orchestration
-├── .env.example # Environment variables example
-└── README.md # This file
-\`\`\`
+│   ├── __init__.py              # Package initialization
+│   ├── buffer.py                # Device buffer for incomplete data
+│   ├── config.py                # Configuration management
+│   ├── message_processor.py     # LMS message processing
+│   ├── sync.py                  # Main sync orchestration
+│   ├── zabbix_client.py         # Zabbix API client
+│   └── __pycache__/             # Compiled Python files
+├── .env.example             # Environment variables example
+└── README.md                # Project documentation
+```
 
 ## Installation
 
