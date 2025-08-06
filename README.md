@@ -26,8 +26,8 @@ lms-zabbix-sync/
 │   ├── config.py                # Configuration management
 │   ├── message_processor.py     # LMS message processing
 │   ├── sync.py                  # Main sync orchestration
-│   ├── zabbix_client.py         # Zabbix API client
-│   └── __pycache__/             # Compiled Python files
+│   └── zabbix_client.py         # Zabbix API client
+│   
 ├── .env.example             # Environment variables example
 └── README.md                # Project documentation
 ```
