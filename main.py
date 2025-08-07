@@ -3,7 +3,6 @@ import logging
 from src.config import get_config
 from src.sync import LMSZabbixSync
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -16,15 +15,15 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    """Main function to run the LMS-Zabbix sync."""
     try:
-        # Load configuration
         config = get_config()
 
-        # Create sync instance
+        if not config:
+            logger.error("Configuration loading failed, exiting")
+            sys.exit(1)
+
         sync = LMSZabbixSync(config['rabbitmq'], config['zabbix'])
 
-        # Connect to services
         if not sync.connect_rabbitmq():
             logger.error("Failed to connect to RabbitMQ, exiting")
             sys.exit(1)
@@ -33,7 +32,6 @@ def main():
             logger.error("Failed to connect to Zabbix, exiting")
             sys.exit(1)
 
-        # Start consuming messages
         sync.start_consuming()
 
     except KeyboardInterrupt:

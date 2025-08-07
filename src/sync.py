@@ -1,7 +1,3 @@
-"""
-Main sync class that handles RabbitMQ messages and Zabbix operations
-"""
-
 import logging
 import pika
 import sys
@@ -12,10 +8,7 @@ from .message_processor import LMSMessageProcessor
 
 logger = logging.getLogger(__name__)
 
-
 class LMSZabbixSync:
-    """Main sync class that handles RabbitMQ messages and Zabbix operations."""
-
     def __init__(self, rabbitmq_config: Dict[str, Any], zabbix_config: Dict[str, Any]):
         self.rabbitmq_config = rabbitmq_config
         self.zabbix_config = zabbix_config
@@ -48,13 +41,11 @@ class LMSZabbixSync:
             self.connection = pika.BlockingConnection(parameters)
             self.channel = self.connection.channel()
 
-            # Declare queue
             self.channel.queue_declare(
                 queue=self.rabbitmq_config["queue"],
                 durable=True
             )
 
-            # Set QoS for fair dispatch
             self.channel.basic_qos(prefetch_count=1)
 
             logger.info(f"Connected to RabbitMQ: {self.rabbitmq_config['host']}")
@@ -65,20 +56,16 @@ class LMSZabbixSync:
             return False
 
     def connect_zabbix(self) -> bool:
-        """Connect to Zabbix API."""
         return self.zabbix_api.connect()
 
     def process_message(self, message_body: str) -> bool:
-        """Process a single message and apply changes to Zabbix."""
         try:
-            # Parse LMS message format
             zabbix_data = self.message_processor.parse_lms_message(message_body)
 
             if not zabbix_data:
-                # Message was buffered or couldn't be parsed
                 buffer_status = self.device_buffer.get_buffer_status()
                 logger.info(f"Message buffered or skipped. Buffer status: {buffer_status}")
-                return True  # Don't requeue, message was handled appropriately
+                return True
 
             action = zabbix_data.get("action")
             host = zabbix_data.get("host")
@@ -104,20 +91,16 @@ class LMSZabbixSync:
             return False
 
     def message_callback(self, ch, method, properties, body):
-        """Callback function for processing RabbitMQ messages."""
         try:
             message_body = body.decode('utf-8')
             logger.info(f"Received message: {method.delivery_tag}")
 
-            # Process the message
             success = self.process_message(message_body)
 
             if success:
-                # Acknowledge the message
                 ch.basic_ack(delivery_tag=method.delivery_tag)
                 logger.info(f"Message processed successfully: {method.delivery_tag}")
             else:
-                # Reject the message and requeue it
                 ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
                 logger.warning(f"Message processing failed, requeuing: {method.delivery_tag}")
 
@@ -126,9 +109,7 @@ class LMSZabbixSync:
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
     def start_consuming(self):
-        """Start consuming messages from RabbitMQ."""
         try:
-            # Set up consumer
             self.channel.basic_consume(
                 queue=self.rabbitmq_config["queue"],
                 on_message_callback=self.message_callback,
@@ -137,7 +118,6 @@ class LMSZabbixSync:
 
             logger.info("Starting to consume messages from RabbitMQ...")
 
-            # Start consuming messages
             self.channel.start_consuming()
 
         except KeyboardInterrupt:

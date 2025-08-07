@@ -1,7 +1,3 @@
-"""
-LMS message processor for handling database trigger messages
-"""
-
 import json
 import logging
 from typing import Dict, Any, Optional
@@ -10,24 +6,19 @@ from .zabbix_client import ZabbixAPIClient
 
 logger = logging.getLogger(__name__)
 
-
 class LMSMessageProcessor:
-    """Processes LMS database trigger messages."""
-
     def __init__(self, device_buffer: DeviceBuffer, zabbix_api: ZabbixAPIClient):
         self.device_buffer = device_buffer
         self.zabbix_api = zabbix_api
 
     @staticmethod
     def ip_to_string(ip_int: int) -> str:
-        """Convert integer IP to string format."""
         if ip_int == 0:
             return ""
         ip_bytes = ip_int.to_bytes(4, byteorder='big')
         return ".".join(str(b) for b in ip_bytes)
 
     def parse_lms_message(self, message_body: str) -> Optional[Dict[str, Any]]:
-        """Parse LMS message and route to appropriate processor."""
         try:
             lms_data = json.loads(message_body)
             action = lms_data.get("Action")
@@ -53,7 +44,6 @@ class LMSMessageProcessor:
             return None
 
     def _process_netdevice(self, action: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Process netdevice table messages."""
         device_id = payload.get("id")
         device_name = payload.get("name", "")
         clean_name = device_name.lstrip("#")
@@ -73,7 +63,7 @@ class LMSMessageProcessor:
                     self.device_buffer.cache_device_info(device_id, complete_device)
                     return {
                         "action": "create",
-                        "host": f"device-{device_id}",
+                        "host": complete_device["name"],
                         "name": complete_device["name"],
                         "ip": complete_device["ip"],
                         "description": complete_device["description"],
@@ -82,7 +72,7 @@ class LMSMessageProcessor:
             return None
 
         elif action == "UPDATE":
-            host_name = f"device-{device_id}"
+            host_name = clean_name
             host = self.zabbix_api.get_host_by_name(host_name)
 
             if host:
@@ -125,8 +115,8 @@ class LMSMessageProcessor:
                     self.device_buffer.cache_device_info(netdev_id, complete_device)
                     return {
                         "action": "create",
-                        "host": f"device-{netdev_id}",
-                        "name": complete_device["name"],
+                        "host": complete_device["name"],  # Use device name instead of device-{id}
+                        "name": complete_device["name"],  # Keep name the same
                         "ip": complete_device["ip"],
                         "description": complete_device["description"],
                         "status": complete_device["status"]
@@ -134,22 +124,28 @@ class LMSMessageProcessor:
             return None
 
         elif action == "UPDATE":
-            host_name = f"device-{netdev_id}"
-            host = self.zabbix_api.get_host_by_name(host_name)
+            if netdev_id in self.device_buffer.device_info_cache:
+                device_info = self.device_buffer.device_info_cache[netdev_id]
+                host_name = device_info.get("name")
+                if host_name:
+                    host = self.zabbix_api.get_host_by_name(host_name)
 
-            if host:
-                update_data = {
-                    "host": host_name,
-                    "ip": ip_string
-                }
-                logger.info(f"Updating host {host_name} IP in Zabbix to: {ip_string}")
-                self.zabbix_api.update_host(update_data)
+                    if host:
+                        update_data = {
+                            "host": host_name,
+                            "ip": ip_string
+                        }
+                        logger.info(f"Updating host {host_name} IP in Zabbix to: {ip_string}")
+                        self.zabbix_api.update_host(update_data)
+                    else:
+                        logger.warning(f"Host {host_name} not found in Zabbix for IP update.")
+                else:
+                    logger.warning(f"No cached device name found for netdev_id {netdev_id}")
             else:
-                logger.warning(f"Host {host_name} not found in Zabbix for IP update.")
+                logger.warning(f"No cached device info found for netdev_id {netdev_id}")
             return None
 
         elif action == "DELETE":
-            # Find and delete host in Zabbix by IP
             if ip_string:
                 host = self.zabbix_api.get_host_by_ip(ip_string)
                 if host:

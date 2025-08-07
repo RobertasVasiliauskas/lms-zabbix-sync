@@ -8,7 +8,6 @@ from pyzabbix import ZabbixAPI
 
 logger = logging.getLogger(__name__)
 
-
 class ZabbixAPIClient:
     """Zabbix API client using py-zabbix library."""
 
