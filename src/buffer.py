@@ -71,13 +71,11 @@ class DeviceBuffer:
         }
 
     def restore_device_to_pending(self, host: Dict[str, Any]):
-        device_id = str(host.get("host").split("_")[4])  # Assuming device_id is part of the host name
-
+        device_id = str(host.get("host").split("_")[4])
         self.add_device(device_id, {'name': host.get("name"), 'description': host.get("description"), 'status': host.get("status")})
         logger.info(f"Restored device {device_id} to pending buffer after node deletion.")
 
     def save_state(self):
-        """Persist buffer state to disk."""
         try:
             state = {
                 "pending_devices": self.pending_devices,
@@ -89,7 +87,6 @@ class DeviceBuffer:
             logger.error(f"Failed to save buffer state: {e}")
 
     def load_state(self):
-        """Load buffer state from disk if available."""
         if os.path.exists(BUFFER_STATE_FILE):
             try:
                 with open(BUFFER_STATE_FILE, "r") as f:
