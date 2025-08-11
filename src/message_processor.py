@@ -36,6 +36,8 @@ class LMSMessageProcessor:
 
         logger.info(f"Processing {action} for table {table}, ID={lms_data.get('ID')}")
 
+        logger.info(f"Payload: {json.dumps(lms_data, indent=2)}")
+
         handler = self.table_handlers.get(table)
         if handler:
             try:
@@ -46,10 +48,8 @@ class LMSMessageProcessor:
             logger.warning(f"Unknown table type: {table}")
         return None
 
-    # --- Private Processing Methods ---
-
     def _process_netdevice(
-        self, action: str, payload: Dict[str, Any], payload_previous: Dict[str, Any]
+            self, action: str, payload: Dict[str, Any], payload_previous: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         device_id = payload.get("id")
         clean_name = payload.get("name", "").lstrip("#")
@@ -62,6 +62,7 @@ class LMSMessageProcessor:
                 "action": "create"
             }
             if self.device_buffer.add_device(device_id, device_data):
+                self.device_buffer.save_state()
                 return self._finalize_device(device_id)
             self.device_buffer.save_state()
 
@@ -74,7 +75,7 @@ class LMSMessageProcessor:
         return None
 
     def _update_netdevice(
-        self, device_id: int, clean_name: str, payload: Dict[str, Any], payload_previous: Dict[str, Any]
+            self, device_id: int, clean_name: str, payload: Dict[str, Any], payload_previous: Dict[str, Any]
     ) -> None:
         if not payload_previous:
             logger.warning("No previous payload available for netdevice UPDATE")
@@ -91,14 +92,7 @@ class LMSMessageProcessor:
                 "description": payload.get("description", ""),
                 "status": 0 if payload.get("status", 0) == 0 else 1
             }
-            if self.zabbix_api.update_host(update_data):
-                cached = self.device_buffer.device_info_cache.get(device_id, {})
-                cached.update({
-                    "name": clean_name,
-                    "description": update_data["description"],
-                    "status": update_data["status"]
-                })
-                self.device_buffer.cache_device_info(device_id, cached)
+            self.zabbix_api.update_host(update_data)
         else:
             for dev_id, data in self.device_buffer.pending_devices.items():
                 if data.get("name") == prev_clean_name:
@@ -113,7 +107,7 @@ class LMSMessageProcessor:
             logger.info(f"Host {prev_clean_name} not found in pending buffer")
 
     def _process_node(
-        self, action: str, payload: Dict[str, Any], payload_previous: Dict[str, Any]
+            self, action: str, payload: Dict[str, Any], payload_previous: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         ip_string = self.ip_to_string(payload.get("ipaddr", 0))
         netdev_id = payload.get("netdev")
@@ -149,13 +143,15 @@ class LMSMessageProcessor:
             return
         host = self.zabbix_api.get_host_by_ip(ip_string)
         if host:
+            self.device_buffer.restore_device_to_pending(host)
+            self.device_buffer.save_state()
             self.zabbix_api.delete_host(host["host"])
-            self.device_buffer.restore_device_to_pending(netdev_id)
 
     def _finalize_device(self, device_id: int) -> Optional[Dict[str, Any]]:
         complete_device = self.device_buffer.get_complete_device(device_id)
         if complete_device:
-            self.device_buffer.cache_device_info(device_id, complete_device)
+            self.device_buffer.remove_device(device_id)
+            self.device_buffer.save_state()
             return {
                 "action": "create",
                 "host": complete_device["name"],

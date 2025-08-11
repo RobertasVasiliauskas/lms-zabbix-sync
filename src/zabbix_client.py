@@ -13,7 +13,6 @@ TYPE_TO_NAME = {
     "ont": "ONT", "stb": "STB", "nvr": "NVR", "nas": "NAS", "cld": "Cloud", "srv": "Server", "vm": "Virtual Machine"
 }
 
-
 class ZabbixAPIClient:
     def __init__(self, url: str, username: str, password: str, host_group_id: str = "1") -> None:
         self.url = url.rstrip("/")
@@ -71,8 +70,24 @@ class ZabbixAPIClient:
             logger.exception(f"Error getting host by IP {ip}: {e}")
             return None
 
-    def _build_interface(self, ip: str, port: str = "10050") -> Dict[str, Any]:
-        return {"type": 1, "main": 1, "useip": 1, "ip": ip, "dns": "", "port": port}
+    def _build_interface(self, ip: str, port: str = "161", interface_type: int = 2) -> Dict[str, Any]:
+        interface = {
+            "type": interface_type,
+            "main": 1,
+            "useip": 1,
+            "ip": ip,
+            "dns": "",
+            "port": port
+        }
+
+        if interface_type == 2:
+            interface["details"] = {
+                "version": 2,
+                "bulk": 1,
+                "community": "public",
+                "max_repetitions": 10
+            }
+        return interface
 
     def create_host(self, host_data: Dict[str, Any]) -> Optional[str]:
         try:
@@ -80,12 +95,16 @@ class ZabbixAPIClient:
                 "host": host_data["host"],
                 "name": host_data.get("name", host_data["host"]),
                 "description": host_data.get("description", ""),
-                "interfaces": [self._build_interface(host_data.get("ip", ""))],
+                "interfaces": [self._build_interface(
+                    ip=host_data.get("ip", ""),
+                    port=host_data.get("port", "161"),
+                    interface_type=2,
+                )],
                 "groups": [{"groupid": self.host_group_id}],
-                "templates": host_data.get("templates", []),
-                "macros": host_data.get("macros", []),
+                "templates": self.find_templates_to_apply(host_data["host"]),
                 "tags": self.find_tags_to_apply(host_data["host"])
             }
+
             result = self.api.host.create(**params)
             if result and 'hostids' in result:
                 return result['hostids'][0]
@@ -97,21 +116,28 @@ class ZabbixAPIClient:
         try:
             host = self.get_host_by_name(host_data["host"])
             if not host:
+                logger.warning(f"Host {host_data['host']} not found in Zabbix")
                 return False
             update_params = {
                 "hostid": host["hostid"],
+                "host": host_data.get("new_host", host_data["host"]),
                 "name": host_data.get("name", host_data["host"]),
                 "description": host_data.get("description", ""),
                 "status": host_data.get("status", 0)
             }
-            if "ip" in host_data:
+            if "ip" in host_data or "snmp_details" in host_data:
                 interfaces = self.api.hostinterface.get(hostids=host["hostid"])
                 if interfaces:
                     self.api.hostinterface.update(**{
-                        **self._build_interface(host_data["ip"], port="161"),
+                        **self._build_interface(
+                            ip=host_data.get("ip", interfaces[0]["ip"]),
+                            port=host_data.get("port", interfaces[0]["port"]),
+                            interface_type=2,
+                        ),
                         "interfaceid": interfaces[0]["interfaceid"]
                     })
-            self.api.host.update(**update_params, tags=self.find_tags_to_apply(update_params["name"]))
+            response = self.api.host.update(**update_params, tags=self.find_tags_to_apply(update_params["name"]))
+            logger.info(f"Zabbix API update response for host {update_params['host']}: {response}")
             return True
         except Exception as e:
             logger.exception(f"Error updating host {host_data.get('host')}: {e}")
@@ -143,3 +169,31 @@ class ZabbixAPIClient:
         except Exception as e:
             logger.exception(f"Error finding tags for {hostname}: {e}")
             return []
+
+    def find_templates_to_apply(self, hostname: str) -> List[Dict[str, str]]:
+        try:
+            parts = hostname.split("_")
+            if len(parts) < 4:
+                return []
+            layer_code = parts[2]
+            template_id = self.get_template_id_by_name("Generic by SNMP")
+            if template_id:
+                return [{"templateid": template_id}]
+            return []
+        except Exception as e:
+            logger.exception(f"Error finding templates for {hostname}: {e}")
+            return []
+
+    def get_template_id_by_name(self, template_name: str) -> Optional[str]:
+        try:
+            templates = self.api.template.get(
+                output=["templateid"],
+                filter={"name": template_name}
+            )
+            if templates:
+                return templates[0]["templateid"]
+            logger.warning(f"Template '{template_name}' not found.")
+            return None
+        except Exception as e:
+            logger.exception(f"Error getting template ID for '{template_name}': {e}")
+            return None

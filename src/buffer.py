@@ -8,48 +8,60 @@ logger = logging.getLogger(__name__)
 BUFFER_STATE_FILE = "buffer_state.json"
 
 class DeviceBuffer:
-    def __init__(self) -> None:
-        self.pending_devices: Dict[int, Dict[str, Any]] = {}
-        self.device_ips: Dict[int, str] = {}
-        self.device_info_cache: Dict[int, Dict[str, Any]] = {}
+
+    def __init__(self):
+        self.pending_devices = {}
+        self.device_ips = {}
+        self.device_info_cache = {}
         self.load_state()
 
-    @staticmethod
-    def _is_device_complete(device: Dict[str, Any]) -> bool:
-        return bool(device.get("name") and device.get("ip"))
-
-    def add_device(self, device_id: int, device_data: Dict[str, Any]) -> bool:
-        if device_id in self.device_ips:
-            device_data["ip"] = self.device_ips[device_id]
+    def add_device(self, device_id: str, device_data: Dict[str, Any]) -> bool:
         self.pending_devices[device_id] = device_data
 
-        if self._is_device_complete(device_data):
-            logger.info(f"Device {device_id} complete with IP {device_data['ip']}")
+        if device_id in self.device_ips:
+            self.pending_devices[device_id]["ip"] = self.device_ips[device_id]
+
+        device = self.pending_devices[device_id]
+        if device.get("name") and device.get("ip"):
+            logger.info(f"Device {device_id} is now complete with IP: {device['ip']}")
             return True
-        logger.info(f"Device {device_id} buffered (incomplete)")
-        return False
+        else:
+            logger.info(f"Device {device_id} buffered (incomplete: name={device.get('name')}, ip={device.get('ip')})")
+            return False
 
     def add_ip_for_device(self, device_id: int, ip: str) -> bool:
+        device_id = str(device_id)
         self.device_ips[device_id] = ip
+
         if device_id in self.pending_devices:
+            print("dupa 2")
             self.pending_devices[device_id]["ip"] = ip
-            if self._is_device_complete(self.pending_devices[device_id]):
-                logger.info(f"Device {device_id} complete with IP {ip}")
+            device = self.pending_devices[device_id]
+            if device.get("name") and device.get("ip"):
+                logger.info(f"Device {device_id} is now complete with IP: {device['ip']}")
                 return True
-        logger.info(f"Device {device_id} IP buffered ({ip})")
+
+        logger.info(f"Device {device_id} IP buffered (ip={ip})")
         return False
 
     def get_complete_device(self, device_id: int) -> Optional[Dict[str, Any]]:
-        device = self.pending_devices.get(device_id)
-        if device and self._is_device_complete(device):
-            self.pending_devices.pop(device_id, None)
-            self.device_ips.pop(device_id, None)
-            return device
+        device_id = str(device_id)
+        if device_id in self.pending_devices:
+            device = self.pending_devices[device_id]
+            if device.get("name") and device.get("ip"):
+                # Remove from buffer after use
+                del self.pending_devices[device_id]
+                if device_id in self.device_ips:
+                    del self.device_ips[device_id]
+                return device
         return None
 
-    def remove_device(self, device_id: int) -> None:
-        self.pending_devices.pop(device_id, None)
-        self.device_ips.pop(device_id, None)
+    def remove_device(self, device_id: int):
+        device_id = str(device_id)
+        if device_id in self.pending_devices:
+            del self.pending_devices[device_id]
+        if device_id in self.device_ips:
+            del self.device_ips[device_id]
         logger.info(f"Removed device {device_id} from buffer")
 
     def get_buffer_status(self) -> Dict[str, int]:
@@ -58,41 +70,35 @@ class DeviceBuffer:
             "pending_ips": len(self.device_ips)
         }
 
-    def cache_device_info(self, device_id: int, device_data: Dict[str, Any]) -> None:
-        self.device_info_cache[device_id] = {
-            k: device_data[k] for k in ("name", "description", "status", "ip") if k in device_data
-        }
+    def restore_device_to_pending(self, host: Dict[str, Any]):
+        device_id = str(host.get("host").split("_")[4])  # Assuming device_id is part of the host name
 
-    def restore_device_to_pending(self, device_id: int) -> None:
-        if device_id in self.device_info_cache:
-            cached = self.device_info_cache[device_id].copy()
-            cached.pop("ip", None)
-            self.pending_devices[device_id] = cached
-            logger.info(f"Restored device {device_id} to pending buffer after deletion.")
+        self.add_device(device_id, {'name': host.get("name"), 'description': host.get("description"), 'status': host.get("status")})
+        logger.info(f"Restored device {device_id} to pending buffer after node deletion.")
 
-    def save_state(self) -> None:
+    def save_state(self):
+        """Persist buffer state to disk."""
         try:
             state = {
                 "pending_devices": self.pending_devices,
-                "device_ips": self.device_ips,
-                "device_info_cache": self.device_info_cache
             }
             with open(BUFFER_STATE_FILE, "w") as f:
                 json.dump(state, f)
-            logger.info("Buffer state saved.")
+            logger.info("Buffer state saved to disk.")
         except Exception as e:
-            logger.exception(f"Failed to save buffer state: {e}")
+            logger.error(f"Failed to save buffer state: {e}")
 
-    def load_state(self) -> None:
-        if not os.path.exists(BUFFER_STATE_FILE):
+    def load_state(self):
+        """Load buffer state from disk if available."""
+        if os.path.exists(BUFFER_STATE_FILE):
+            try:
+                with open(BUFFER_STATE_FILE, "r") as f:
+                    state = json.load(f)
+                self.pending_devices = state.get("pending_devices", {})
+                self.device_ips = state.get("device_ips", {})
+                self.device_info_cache = state.get("device_info_cache", {})
+                logger.info("Buffer state loaded from disk.")
+            except Exception as e:
+                logger.error(f"Failed to load buffer state: {e}")
+        else:
             logger.info("No buffer state file found, starting fresh.")
-            return
-        try:
-            with open(BUFFER_STATE_FILE, "r") as f:
-                state = json.load(f)
-            self.pending_devices = state.get("pending_devices", {})
-            self.device_ips = state.get("device_ips", {})
-            self.device_info_cache = state.get("device_info_cache", {})
-            logger.info("Buffer state loaded.")
-        except Exception as e:
-            logger.exception(f"Failed to load buffer state: {e}")
