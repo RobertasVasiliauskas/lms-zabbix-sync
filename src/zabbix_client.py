@@ -1,15 +1,41 @@
-"""
-Zabbix API client for managing hosts
-"""
-
 import logging
 from typing import Dict, Any, Optional
 from pyzabbix import ZabbixAPI
 
+from .utility import get_city_by_zip
+
+
 logger = logging.getLogger(__name__)
 
+LAYER_TO_NAME = {
+    "c": "Core",
+    "d": "Distribution",
+    "a": "Access",
+}
+
+TYPE_TO_NAME = {
+    "rtr": "Router",
+    "ctr": "Core Router",
+    "etr": "Edge Router",
+    "sw": "Switch",
+    "swm": "Switch Management",
+    "ap": "Access Point",
+    "cam": "Camera",
+    "gsm": "GSM Gateway",
+    "ptp": "point-to-point",
+    "ptmp": "point-to-multipoint",
+    "olt": "OLT",
+    "onu": "ONU",
+    "ont": "ONT",
+    "stb": "STB",
+    "nvr": "NVR",
+    "nas": "NAS",
+    "cld": "Cloud",
+    "srv": "Server",
+    "vm": "Virtual Machine",
+}
+
 class ZabbixAPIClient:
-    """Zabbix API client using py-zabbix library."""
 
     def __init__(self, url: str, username: str, password: str, host_group_id: str = "1"):
         self.url = url.rstrip('/')
@@ -19,13 +45,11 @@ class ZabbixAPIClient:
         self.api = None
 
     def connect(self) -> bool:
-        """Connect to Zabbix API."""
         try:
             self.api = ZabbixAPI(self.url)
             self.api.login(self.username, self.password)
             logger.info("Successfully connected to Zabbix API")
 
-            # Verify host group exists
             if not self._verify_host_group():
                 logger.warning(f"Host group {self.host_group_id} not found, will try to use first available group")
                 self._find_available_host_group()
@@ -36,7 +60,6 @@ class ZabbixAPIClient:
             return False
 
     def _verify_host_group(self) -> bool:
-        """Verify that the configured host group exists."""
         try:
             groups = self.api.hostgroup.get(groupids=[self.host_group_id])
             if groups:
@@ -50,7 +73,6 @@ class ZabbixAPIClient:
             return False
 
     def _find_available_host_group(self) -> bool:
-        """Find and use the first available host group."""
         try:
             groups = self.api.hostgroup.get()
             if groups:
@@ -65,7 +87,6 @@ class ZabbixAPIClient:
             return False
 
     def get_host_by_name(self, hostname: str) -> Optional[Dict[str, Any]]:
-        """Get host by name."""
         try:
             hosts = self.api.host.get(filter={"host": hostname})
             return hosts[0] if hosts else None
@@ -74,7 +95,6 @@ class ZabbixAPIClient:
             return None
 
     def get_host_by_ip(self, ip: str) -> Optional[Dict[str, Any]]:
-        """Get host by IP address."""
         try:
             hosts = self.api.host.get()
             for host in hosts:
@@ -88,11 +108,12 @@ class ZabbixAPIClient:
             return None
 
     def create_host(self, host_data: Dict[str, Any]) -> Optional[str]:
-        """Create a new host in Zabbix."""
+
+        print(host_data)
+
         try:
-            # Prepare interface
             interface = {
-                "type": 1,  # SNMP
+                "type": 1,
                 "main": 1,
                 "useip": 1,
                 "ip": host_data.get("ip", ""),
@@ -100,19 +121,14 @@ class ZabbixAPIClient:
                 "port": "10050"
             }
 
-            # Prepare host groups
             groups = [{"groupid": self.host_group_id}]
 
-            # Prepare templates (empty list if not provided)
             templates = host_data.get("templates", [])
 
-            # Prepare macros (empty list if not provided)
             macros = host_data.get("macros", [])
 
-            # Prepare tags (empty list if not provided)
-            tags = host_data.get("tags", [])
+            tags = self.find_tags_to_apply(host_data["host"])
 
-            # Create host
             host_params = {
                 "host": host_data["host"],
                 "name": host_data.get("name", host_data["host"]),
@@ -140,15 +156,12 @@ class ZabbixAPIClient:
             return None
 
     def update_host(self, host_data: Dict[str, Any]) -> bool:
-        """Update an existing host in Zabbix."""
         try:
-            # Get existing host
             host = self.get_host_by_name(host_data["host"])
             if not host:
                 logger.error(f"Host not found for update: {host_data['host']}")
                 return False
 
-            # Prepare update parameters
             update_params = {
                 "hostid": host["hostid"],
                 "name": host_data.get("name", host_data["host"]),
@@ -156,9 +169,7 @@ class ZabbixAPIClient:
                 "status": host_data.get("status", 0)
             }
 
-            # Update interfaces if IP is provided
             if "ip" in host_data:
-                # Get existing interfaces
                 interfaces = self.api.hostinterface.get(hostids=host["hostid"])
                 if interfaces:
                     interface = interfaces[0]
@@ -169,12 +180,11 @@ class ZabbixAPIClient:
                         "useip": 1,
                         "ip": host_data["ip"],
                         "dns": "",
-                        "port": "10050"
+                        "port": "161"
                     }
                     self.api.hostinterface.update(**interface_params)
 
-            # Update host
-            result = self.api.host.update(**update_params)
+            result = self.api.host.update(**update_params, tags=self.find_tags_to_apply(update_params["name"]))
 
             if result:
                 logger.info(f"Host updated successfully: {host_data['host']}")
@@ -188,7 +198,6 @@ class ZabbixAPIClient:
             return False
 
     def delete_host(self, hostname: str) -> bool:
-        """Delete a host from Zabbix."""
         try:
             host = self.get_host_by_name(hostname)
             if not host:
@@ -207,3 +216,22 @@ class ZabbixAPIClient:
         except Exception as e:
             logger.error(f"Error deleting host {hostname}: {e}")
             return False
+
+    @staticmethod
+    def find_tags_to_apply(hostname: str) -> list[dict[str, str]]:
+        tags_to_apply = []
+        try:
+            zipcode = hostname.split("_")[1]
+            city = get_city_by_zip(zipcode)
+            tags_to_apply.append({"tag": "city", "value": city})
+
+            layer = hostname.split("_")[2]
+            tags_to_apply.append({"tag": "layer", "value": LAYER_TO_NAME.get(layer, layer)})
+
+            device_type = hostname.split("_")[3]
+            tags_to_apply.append({"tag": "type", "value": TYPE_TO_NAME.get(device_type, device_type)})
+
+            return tags_to_apply
+        except Exception as e:
+            logger.error(f"Error finding tags to apply for host {hostname}: {e}")
+            return []
