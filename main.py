@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    sync = None
     try:
         config = get_config()
 
@@ -39,6 +40,8 @@ def main():
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         sys.exit(1)
+    finally:
+        sync.device_buffer.save_state()
 
 
 if __name__ == "__main__":
